@@ -355,7 +355,8 @@ def fetch_category_news(
     now: datetime | None = None,
 ) -> list[NewsItem]:
     reference_time = now or datetime.now(tz=UTC)
-    cutoff = reference_time - timedelta(hours=hours_back)
+    category_hours_back = 7 * 24 if category.key == "fertilizer_learning" else hours_back
+    cutoff = reference_time - timedelta(hours=category_hours_back)
     collected: dict[str, NewsItem] = {}
 
     if category.key == "fertilizer_learning":
@@ -386,18 +387,34 @@ def fetch_category_news(
             weather = response.json()
             current = weather.get("current", {})
             daily = weather.get("daily", {})
+            weather_descriptions = {
+                0: "맑음", 1: "대체로 맑음", 2: "부분적으로 흐림", 3: "흐림",
+                45: "안개", 48: "짙은 안개", 51: "약한 이슬비", 53: "이슬비",
+                55: "강한 이슬비", 61: "약한 비", 63: "비", 65: "강한 비",
+                71: "약한 눈", 73: "눈", 75: "강한 눈", 80: "소나기",
+                81: "소나기", 82: "강한 소나기", 95: "뇌우",
+            }
             if category.key.endswith("today"):
                 title = "청양 오늘 날씨"
+                condition = weather_descriptions.get(current.get("weather_code"), "변화하는 날씨")
                 summary = (
-                    f"현재 기온 {current.get('temperature_2m')}°C, 습도 {current.get('relative_humidity_2m')}%, "
-                    f"풍속 {current.get('wind_speed_10m')}km/h입니다. 날씨 코드 {current.get('weather_code')}입니다."
+                    f"오늘 청양은 {condition}으로 예상됩니다. 현재 기온은 {current.get('temperature_2m')}°C, "
+                    f"습도 {current.get('relative_humidity_2m')}%, 바람 {current.get('wind_speed_10m')}km/h입니다. "
+                    "비·바람이 강해질 때는 농약 살포와 시설물 작업을 미루는 것이 좋습니다."
                 )
             else:
                 title = "청양 이번 주 날씨 개요"
+                dates = daily.get("time", [])
                 highs = daily.get("temperature_2m_max", [])
                 lows = daily.get("temperature_2m_min", [])
                 rain = daily.get("precipitation_probability_max", [])
-                summary = f"앞으로 7일 최고기온 {highs}, 최저기온 {lows}, 강수확률 {rain}의 전망입니다."
+                forecast = "; ".join(
+                    f"{date}: {weather_descriptions.get(code, '날씨 변화')}, {low}~{high}°C, 강수확률 {prob}%"
+                    for date, code, low, high, prob in zip(
+                        dates, daily.get("weather_code", []), lows, highs, rain
+                    )
+                )
+                summary = f"청양 앞으로 7일 전망입니다. {forecast} 농작업은 비가 적고 바람이 약한 날에 우선 배치하세요."
             item = NewsItem(
                 category=category.key, title=title, source="Open-Meteo",
                 source_domain="open-meteo.com", url="https://open-meteo.com/",
@@ -465,6 +482,24 @@ def fetch_category_news(
         key=lambda article: (article.score, article.published_at),
         reverse=True,
     )
+    if not items and category.key == "fertilizer_learning":
+        learning_notes = {
+            "질소 비료의 역할과 과다 시비": "질소는 잎과 줄기 생장을 돕지만 너무 많이 주면 웃자람과 병해, 품질 저하가 생길 수 있습니다. 생육 상태와 토양검정 결과를 보고 나누어 주는 것이 핵심입니다.",
+            "인산 비료와 뿌리 발달": "인산은 뿌리 발달과 초기 활착을 돕습니다. 부족하면 생장이 늦어질 수 있지만 토양에 쌓이기 쉬우므로 매번 많이 주기보다 토양검정으로 필요량을 확인해야 합니다.",
+            "칼리 비료와 작물의 병해·수분 관리": "칼리는 수분 조절과 줄기 강화, 품질 유지에 관여합니다. 부족하면 작물이 약해질 수 있으므로 생육 단계와 작물별 권장량에 맞춰 사용해야 합니다.",
+            "퇴비와 유기질비료": "퇴비와 유기질비료는 양분 공급뿐 아니라 토양 물리성 개선에도 도움이 됩니다. 완전히 부숙되지 않은 재료는 뿌리와 작물에 피해를 줄 수 있어 사용 시기를 지켜야 합니다.",
+            "토양검정과 맞춤형 시비": "토양검정은 현재 토양에 어떤 양분이 부족하거나 많은지 확인하는 방법입니다. 감으로 비료를 더하기보다 검정 결과에 맞춰 필요한 성분만 보충하는 것이 비용과 환경 부담을 줄입니다.",
+            "밑거름과 웃거름의 차이": "밑거름은 파종이나 정식 전에 기본 양분을 공급하고, 웃거름은 생육 중 부족한 양분을 보충합니다. 한 번에 몰아 주기보다 작물 생육 단계에 맞춰 나누는 편이 안전합니다.",
+            "비료 혼용과 시비 시기": "비료는 성분에 따라 섞었을 때 굳거나 작물에 피해를 줄 수 있습니다. 제품 표시와 농촌진흥기관의 사용 기준을 확인하고, 비가 오기 직전이나 강한 더위에는 시비를 피하는 것이 좋습니다.",
+        }
+        topic = category.queries[0]
+        items = [NewsItem(
+            category=category.key, title=f"오늘의 비료 공부: {topic}", source="농업 학습 자료",
+            source_domain="nongsaro.go.kr", url="https://www.nongsaro.go.kr/",
+            published_at=reference_time, summary=learning_notes.get(topic, "오늘은 비료의 역할과 안전한 시비 원칙을 공부합니다."),
+            query=topic, fingerprint=_fingerprint(topic, "농업 학습 자료"), score=100.0,
+            source_weight=5.0, verification_flags=["educational_note"],
+        )]
     return items[:per_query_limit]
 
 
@@ -508,6 +543,12 @@ def category_labels() -> dict[str, str]:
 
 def enrich_articles(articles: list[NewsItem]) -> None:
     for article in articles:
+        if (
+            article.source_domain == "open-meteo.com"
+            or article.category.startswith("cheongyang_weather_")
+            or article.category == "fertilizer_learning"
+        ):
+            continue
         try:
             response = requests.get(
                 article.url,

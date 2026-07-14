@@ -92,7 +92,7 @@ Current weekday defaults are tuned for a denser daily brief:
 
 - score threshold `40`
 - up to `4` stories per populated category
-- TTS pace `1.27x`
+- TTS pace `0.95x`
 
 ## GitHub Actions
 
@@ -100,7 +100,7 @@ The workflow is defined in `.github/workflows/daily-radio.yml`.
 
 - Schedule: weekday `06:00 KST`
 - The workflow uses `daily` TTS mode by default
-- The workflow pins score threshold `40`, max story count `4`, and TTS speed `1.27`
+- The workflow pins score threshold `40`, max story count `4`, and TTS speed `0.95`
 - Telegram delivery is enabled when the Telegram secrets are present
 - Optional repository variables:
   - `MORNING_RADIO_TELEGRAM_SILENT` for quiet group or channel delivery

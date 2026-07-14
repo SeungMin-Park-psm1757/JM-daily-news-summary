@@ -128,7 +128,7 @@ def load_config(args: argparse.Namespace) -> AppConfig:
         host_voice=os.getenv("MORNING_RADIO_HOST_VOICE", "Charon"),
         analyst_voice=os.getenv("MORNING_RADIO_ANALYST_VOICE", "Leda"),
         tts_quality_mode=os.getenv("MORNING_RADIO_TTS_MODE", "daily"),
-        tts_speed_multiplier=float(os.getenv("MORNING_RADIO_TTS_SPEED", "1.27")),
+        tts_speed_multiplier=float(os.getenv("MORNING_RADIO_TTS_SPEED", "0.95")),
         tts_turn_pause_multiplier=float(os.getenv("MORNING_RADIO_TTS_TURN_PAUSE", "1.5")),
         tts_retry_count=int(os.getenv("MORNING_RADIO_TTS_RETRY_COUNT", "1")),
         tts_retry_delay_seconds=int(os.getenv("MORNING_RADIO_TTS_RETRY_DELAY_SECONDS", "40")),

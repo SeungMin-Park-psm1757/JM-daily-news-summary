@@ -248,6 +248,12 @@ def _select_top_articles(items: list[NewsItem], config: AppConfig) -> list[NewsI
         selected.append(article)
         if len(selected) >= config.max_story_count:
             break
+    if not selected and ranked and ranked[0].category in {"agriculture_news", "fertilizer_news"}:
+        for cluster_index, cluster in enumerate(clusters[: config.max_story_count], start=1):
+            article = _cluster_representative(cluster)
+            article.cluster_id = f"{article.category}-{cluster_index:02d}"
+            article.cluster_size = len(cluster)
+            selected.append(article)
     return selected
 
 
@@ -445,7 +451,7 @@ def _fallback_brief(category: str, label: str, items: list[NewsItem]) -> Categor
             "headline": article.title,
             "angle": _condense_article(article),
             "message_summary": _fallback_message_summary(article),
-            "why_it_matters": _why_it_matters(label),
+            "why_it_matters": _why_it_matters(category, label),
             "verification_note": _verification_note(article.verification_flags or []),
             "source_urls": [article.resolved_url or article.url],
             "score": article.score,
@@ -551,6 +557,8 @@ def _follow_up_question(label: str, stories: list[dict[str, Any]]) -> str:
 
 
 def _fallback_message_summary(article: NewsItem) -> str:
+    if article.category.startswith("cheongyang_weather_"):
+        return _ensure_sentence(article.summary or article.title)
     condensed = _first_sentence(_condense_article(article))
     if _headline_overlap_ratio(article.title, condensed) >= 0.82 and article.summary:
         condensed = _first_sentence(_ensure_sentence(article.summary))
@@ -653,7 +661,16 @@ def _ensure_sentence(text: str) -> str:
     return cleaned
 
 
-def _why_it_matters(label: str) -> str:
+def _why_it_matters(category: str, label: str) -> str:
+    category_reasons = {
+        "cheongyang_weather_today": "오늘의 기온·강수·바람은 작업 시간과 병해 관리, 관수 계획을 정하는 데 직접 영향을 줍니다.",
+        "cheongyang_weather_week": "이번 주 기상 흐름을 알면 파종·정식·방제·수확 일정을 미리 조정할 수 있습니다.",
+        "agriculture_news": "농가의 재배 일정, 판로, 농업 정책과 지역 농산물 수익성에 영향을 줄 수 있는 소식입니다.",
+        "fertilizer_news": "비료 가격·공급·정책 변화는 생산비와 적정 시비 계획에 직접 영향을 줄 수 있습니다.",
+        "fertilizer_learning": "비료의 원리와 사용 시기를 알면 과다 시비를 줄이고 작물 생육과 토양 상태를 함께 관리할 수 있습니다.",
+    }
+    if category in category_reasons:
+        return category_reasons[category]
     reasons = {
         "한국정치": "정책 일정과 정치권의 힘의 균형에 직접 영향을 줄 수 있습니다.",
         "세계정세": "외교, 에너지, 공급망 흐름에 연쇄적으로 연결될 수 있습니다.",

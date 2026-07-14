@@ -141,9 +141,17 @@ class GeminiEditor:
             "If specifics are uncertain, explicitly say details are still developing. "
             "Never invent quotes, figures, motives, or classified context."
         )
+        category_guidance = {
+            "cheongyang_weather_today": "날씨 코드나 API 설명문을 반복하지 말고 기온, 강수 가능성, 바람을 농작업 관점에서 설명하세요.",
+            "cheongyang_weather_week": "7일 전망의 기온 범위와 비가 올 가능성이 높은 시기를 짚고, 농작업 일정에 미칠 영향을 설명하세요.",
+            "agriculture_news": "정책·기술·판로·재배·병해충 중 무엇이 바뀌었는지와 청양 농가에 적용할 때의 의미를 구분하세요.",
+            "fertilizer_news": "비료 가격·공급·정책·제품·시비 기술 중 핵심 변화를 구체적으로 설명하고 사실과 전망을 구분하세요.",
+            "fertilizer_learning": "초보 농업인도 이해하도록 용어를 풀어 쓰고, 역할·사용 시기·주의할 점을 실제 재배 상황과 연결하세요.",
+        }.get(category, "무엇이 바뀌었고 농가에 어떤 영향이 있는지 구체적으로 설명하세요.")
         prompt = f"""
 Category: {label} ({category})
 Goal: Build a Korean morning radio brief using only the supplied article metadata.
+Category guidance: {category_guidance}
 Return exactly one JSON object.
 
 Required JSON shape:
@@ -168,7 +176,7 @@ Rules:
 - `lead` should summarize the category's main movement, not list headlines, and add one extra sentence of context or implication.
 - `angle` should explain the actual development, not rephrase the headline, and should be slightly more explanatory than a terse bulletin.
 - `message_summary` should be compact, readable in a messenger, avoid headline duplication, and bold only the 1-2 most important changes using **...**.
-- `why_it_matters` should stay shorter than `angle`, but it may use two short sentences when needed.
+- `why_it_matters` should explain a concrete decision, cost, risk, or opportunity for a farmer; never use generic phrases such as "분야 흐름을 읽는 데 의미가 있습니다".
 - `verification_note` should be empty if not needed. Use a short note such as "숫자와 인용은 원문 확인 필요" only when the metadata suggests extra caution.
 - Never invent quotes, figures, motives, battlefield details, or unnamed-source claims.
 - If details are thin, say the story is still developing.
