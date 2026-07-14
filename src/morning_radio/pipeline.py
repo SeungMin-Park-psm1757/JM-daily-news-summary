@@ -139,10 +139,16 @@ def run_pipeline(config: AppConfig) -> Path:
         ]
     )
 
+    local_now = now_utc.astimezone(config.timezone)
+    monthly_weather_active = (
+        (local_now.weekday() == 0 and local_now.day <= 7)
+        or (local_now.weekday() == 4 and local_now.day >= 15)
+    )
     quiet_categories = [
         category.label
         for category in CATEGORIES
         if not selected_by_category.get(category.key)
+        and (category.key != "cheongyang_weather_month" or monthly_weather_active)
     ]
     opening_pair = _opening_pair(now_utc.astimezone(config.timezone))
     quota_log = _quota_log(config, selected_by_category)
@@ -451,7 +457,8 @@ def _fallback_brief(category: str, label: str, items: list[NewsItem]) -> Categor
             "headline": article.title,
             "angle": _condense_article(article),
             "message_summary": _fallback_message_summary(article),
-            "why_it_matters": _why_it_matters(category, label),
+            "article_summary": _article_summary(category, article),
+            "why_it_matters": _article_summary(category, article),
             "verification_note": _verification_note(article.verification_flags or []),
             "source_urls": [article.resolved_url or article.url],
             "score": article.score,
@@ -461,6 +468,7 @@ def _fallback_brief(category: str, label: str, items: list[NewsItem]) -> Categor
             "cluster_size": article.cluster_size,
             "verification_flags": article.verification_flags or [],
             "fallback_story": True,
+            "category": category,
         }
         for article in items
     ]
@@ -563,6 +571,29 @@ def _fallback_message_summary(article: NewsItem) -> str:
     if _headline_overlap_ratio(article.title, condensed) >= 0.82 and article.summary:
         condensed = _first_sentence(_ensure_sentence(article.summary))
     return condensed
+
+
+def _article_summary(category: str, article: NewsItem) -> str:
+    if category == "fertilizer_learning":
+        topic = article.title.split(":", 1)[-1].strip()
+        return _limit_sentences(_learning_summary(topic, article.summary), 8)
+    condensed = _condense_article(article)
+    if category.startswith("cheongyang_weather_"):
+        return _ensure_sentence(article.summary or condensed)
+    return _ensure_sentence(
+        f"{condensed} 보도에 담긴 후속 조치와 현장 적용 여부는 원문에서 추가로 확인할 필요가 있습니다."
+    )
+
+
+def _learning_summary(topic: str, source_summary: str) -> str:
+    if "논문" in topic or "fertilizer" in topic:
+        return _ensure_sentence(source_summary or "최근 비료 연구 논문을 바탕으로 학습합니다.") + " 연구 대상과 비교한 처리 조건을 먼저 확인해야 합니다. 실험 결과는 작물과 토양 조건에 따라 달라질 수 있습니다. 수량뿐 아니라 품질과 토양 양분 변화도 함께 봐야 합니다. 논문의 시비량을 청양 밭에 그대로 적용해서는 안 됩니다. 토양검정과 작물별 표준 시비량을 우선 확인해야 합니다. 효과와 함께 비용, 노동력, 환경 부담도 비교해야 합니다. 작은 면적에서 시험한 뒤 생육과 수확 결과를 기록하는 것이 안전합니다."
+    return _ensure_sentence(source_summary or f"오늘은 {topic}을 공부합니다.") + " 비료의 역할은 작물의 생육 단계와 토양 상태에 따라 달라집니다. 같은 제품도 작물과 시기에 따라 필요한 양이 다를 수 있습니다. 토양검정 결과를 기준으로 부족한 성분을 보충해야 합니다. 한 번에 많이 주기보다 밑거름과 웃거름으로 나누는 편이 안전합니다. 과다 시비는 웃자람과 병해, 염류 집적을 일으킬 수 있습니다. 비가 오기 직전이나 한낮의 고온에는 시비를 피하는 것이 좋습니다. 사용 전 제품 표시와 작물별 권장량을 확인해야 합니다."
+
+
+def _limit_sentences(text: str, limit: int) -> str:
+    sentences = re.split(r"(?<=[.!?])\s+", text.strip())
+    return " ".join(sentence for sentence in sentences[:limit] if sentence).strip()
 
 
 def _verification_note(flags: list[str]) -> str:
@@ -704,7 +735,7 @@ def _render_message_digest(
     lines = [
         f"# {show_title} 요약",
         "",
-        "필요한 기사만 빠르게 찾아볼 수 있도록 핵심 제목, 한 줄 요약, 왜 중요한지만 짧게 정리했습니다.",
+        "필요한 기사만 빠르게 찾아볼 수 있도록 핵심 제목과 육하원칙 중심의 기사 요약을 정리했습니다.",
     ]
 
     for brief in briefs:
@@ -714,12 +745,10 @@ def _render_message_digest(
         lines.append(f"## {brief.label}")
         for story in brief.stories:
             summary = _message_summary(story)
-            why_it_matters = _message_why(story)
             meta = _message_meta(story)
             lines.append(f"- **{story['headline']}**")
-            lines.append(f"  요약: {summary}")
-            if why_it_matters:
-                lines.append(f"  왜 중요하나: {why_it_matters}")
+            summary_label = "요약" if story.get("category", "").startswith("cheongyang_weather_") or story.get("category") == "fertilizer_learning" else "기사 요약"
+            lines.append(f"  {summary_label}: {summary}")
             if meta:
                 lines.append(f"  메모: {meta}")
             lines.append("")
@@ -733,8 +762,12 @@ def _render_message_digest(
 
 
 def _message_summary(story: dict[str, Any]) -> str:
+    if story.get("category") in {"cheongyang_weather_today", "cheongyang_weather_week", "cheongyang_weather_month", "fertilizer_learning"}:
+        detailed = _ensure_sentence(str(story.get("article_summary") or story.get("message_summary") or ""))
+        if detailed:
+            return _emphasize_summary(detailed)
     if story.get("fallback_story"):
-        candidate = _ensure_sentence(str(story.get("message_summary") or story.get("angle") or ""))
+        candidate = _ensure_sentence(str(story.get("article_summary") or story.get("message_summary") or story.get("angle") or ""))
         return _emphasize_summary(candidate)
 
     headline = str(story.get("headline", ""))
@@ -766,7 +799,7 @@ def _message_summary(story: dict[str, Any]) -> str:
 
 
 def _message_why(story: dict[str, Any]) -> str:
-    why = _ensure_sentence(str(story.get("why_it_matters") or ""))
+    why = _ensure_sentence(str(story.get("article_summary") or story.get("why_it_matters") or ""))
     if not why:
         return ""
     return why

@@ -2,9 +2,10 @@
 
 청양 농업 데일리 브리핑은 매일 다음 내용을 수집·요약해 전송합니다.
 
-- 충남 청양의 오늘 날씨와 7일 날씨 개요(Open-Meteo)
+- 충남 청양의 오전·오후·야간 날씨와 강수량(Open-Meteo)
+- 월요일의 7일 전망, 화–금의 내일·모레 전망, 지정된 월간 전망
 - 최근 농사·농업 뉴스와 비료 관련 새 소식
-- 날짜에 따라 바뀌는 쉬운 비료 공부 주제
+- 초–중급 수준의 7–8문장 비료 공부와 금요일 최신 논문 해설
 
 기존의 정치·국제·국방·AI·경제 중심 카테고리는 위 주제로 교체되었습니다.
 
@@ -21,7 +22,7 @@
 - Collects recent news for Korea politics, global affairs, military strategy, weapon systems, AI, quantum, and the economy.
 - Scores articles by recency, source reliability, signal terms, and low-signal penalties.
 - Clusters near-duplicate coverage so one event is represented once, with extra signal matching for finance and geopolitical follow-ups.
-- Produces a messenger digest with a short summary and a short "why it matters" line.
+- Produces a messenger digest with factual 2–3 sentence article summaries based on the six journalistic questions.
 - Generates a two-speaker Korean radio script with a lively host and an energetic analyst voice.
 - Uses Gemini TTS to create an MP3 when enabled.
 - Supports Telegram private chats, groups, channels, and topic threads.

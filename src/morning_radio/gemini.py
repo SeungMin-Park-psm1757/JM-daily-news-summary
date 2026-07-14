@@ -75,6 +75,8 @@ def _attach_story_metadata(stories: list[dict[str, Any]], articles: list[NewsIte
             normalized.setdefault("cluster_size", article.cluster_size)
             normalized.setdefault("verification_flags", article.verification_flags or [])
             normalized.setdefault("verification_note", "")
+            normalized.setdefault("category", article.category)
+            normalized.setdefault("article_summary", normalized.get("why_it_matters", ""))
             if article in available:
                 available.remove(article)
         normalized_stories.append(normalized)
@@ -144,6 +146,7 @@ class GeminiEditor:
         category_guidance = {
             "cheongyang_weather_today": "날씨 코드나 API 설명문을 반복하지 말고 기온, 강수 가능성, 바람을 농작업 관점에서 설명하세요.",
             "cheongyang_weather_week": "7일 전망의 기온 범위와 비가 올 가능성이 높은 시기를 짚고, 농작업 일정에 미칠 영향을 설명하세요.",
+            "cheongyang_weather_month": "기상캐스터처럼 이번 달 또는 다음 달의 전반적인 기온·강수 흐름과 불확실성을 4-5문장으로 설명하세요. 농작업의 구체적 날짜를 단정하지 마세요.",
             "agriculture_news": "정책·기술·판로·재배·병해충 중 무엇이 바뀌었는지와 청양 농가에 적용할 때의 의미를 구분하세요.",
             "fertilizer_news": "비료 가격·공급·정책·제품·시비 기술 중 핵심 변화를 구체적으로 설명하고 사실과 전망을 구분하세요.",
             "fertilizer_learning": "초보 농업인도 이해하도록 용어를 풀어 쓰고, 역할·사용 시기·주의할 점을 실제 재배 상황과 연결하세요.",
@@ -162,7 +165,7 @@ Required JSON shape:
       "headline": "string",
       "angle": "2-3 Korean sentences",
       "message_summary": "1 Korean sentence for messenger delivery",
-      "why_it_matters": "1-2 short Korean sentences",
+      "article_summary": "2-3 Korean sentences covering who, what, when, where, why, and how when available",
       "verification_note": "short Korean note or empty string",
       "source_urls": ["url"]
     }}
@@ -176,7 +179,8 @@ Rules:
 - `lead` should summarize the category's main movement, not list headlines, and add one extra sentence of context or implication.
 - `angle` should explain the actual development, not rephrase the headline, and should be slightly more explanatory than a terse bulletin.
 - `message_summary` should be compact, readable in a messenger, avoid headline duplication, and bold only the 1-2 most important changes using **...**.
-- `why_it_matters` should explain a concrete decision, cost, risk, or opportunity for a farmer; never use generic phrases such as "분야 흐름을 읽는 데 의미가 있습니다".
+- `article_summary` must be a factual 2-3 sentence summary using the six journalistic questions when the metadata supports them. For `cheongyang_weather_month`, use 4-5 sentences; for `fertilizer_learning`, use 7-8 sentences. Do not evaluate importance and never use generic phrases such as "분야 흐름을 읽는 데 의미가 있습니다".
+- For `fertilizer_learning`, write 7-8 sentences at an introductory-to-intermediate level. On Friday, explain the research question, method, main finding, limitations, and practical farm implication of the latest supplied fertilizer paper.
 - `verification_note` should be empty if not needed. Use a short note such as "숫자와 인용은 원문 확인 필요" only when the metadata suggests extra caution.
 - Never invent quotes, figures, motives, battlefield details, or unnamed-source claims.
 - If details are thin, say the story is still developing.
@@ -220,6 +224,7 @@ Articles:
             f"Use the exact speaker labels {self.config.host_name} and {self.config.analyst_name} "
             "on every dialogue line. "
             "Summarize meaning and implications, not headlines. "
+            "For weather sections, speak like a Korean TV weathercaster: give morning, afternoon, and night details, mention rain or snow amounts when present, and omit an importance assessment. "
             "Keep the exchange feeling like live radio banter rather than a long monologue. "
             "Avoid hype, avoid unverified claims, and mention uncertainty when needed."
         )
@@ -256,6 +261,7 @@ Script rules:
 - If `quiet_categories` is not empty, mention those categories once near the end in a single short exchange.
 - Do not include URLs in the script.
 - No investment advice, sensationalism, or overconfident claims.
+- For weather, use natural broadcast phrasing and do not say "why it matters". For the daily study, explain the concept at an introductory-to-intermediate level.
 
 opening_pair:
 {_json_dumps(list(opening_pair))}
