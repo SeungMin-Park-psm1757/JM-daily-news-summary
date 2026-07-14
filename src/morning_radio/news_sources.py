@@ -188,6 +188,28 @@ def _build_feed_url(query: str) -> str:
     return GOOGLE_NEWS_SEARCH.format(query=quote_plus(query))
 
 
+# Daily briefing scope: Cheongyang weather plus agriculture and fertilizer.
+CATEGORIES = (
+    CategoryDefinition("cheongyang_weather_today", "청양 오늘 날씨", ()),
+    CategoryDefinition("cheongyang_weather_week", "청양 이번 주 날씨", ()),
+    CategoryDefinition(
+        "agriculture_news", "농사·농업 뉴스",
+        ("농사 농업 농촌 작물 재배 when:1d", "농업 정책 농업기술 농산물 when:1d"),
+        ("농업", "농사", "작물", "농촌", "재배", "농산물"),
+    ),
+    CategoryDefinition(
+        "fertilizer_news", "비료 관련 새 소식",
+        ("비료 fertilizer 농업 when:1d", "유기질비료 무기질비료 비료 가격 when:1d"),
+        ("비료", "질소", "인산", "칼리", "퇴비", "fertilizer"),
+    ),
+    CategoryDefinition(
+        "fertilizer_learning", "오늘의 비료 공부",
+        ("비료 사용법 토양 양분 작물 when:7d", "비료 종류 시비 방법 농업기술 when:7d"),
+        ("비료", "시비", "토양", "양분", "질소", "인산", "칼리"),
+    ),
+)
+
+
 def _clean_html(value: str | None) -> str:
     if not value:
         return ""
@@ -335,6 +357,57 @@ def fetch_category_news(
     reference_time = now or datetime.now(tz=UTC)
     cutoff = reference_time - timedelta(hours=hours_back)
     collected: dict[str, NewsItem] = {}
+
+    if category.key == "fertilizer_learning":
+        topics = (
+            "질소 비료의 역할과 과다 시비", "인산 비료와 뿌리 발달",
+            "칼리 비료와 작물의 병해·수분 관리", "퇴비와 유기질비료",
+            "토양검정과 맞춤형 시비", "밑거름과 웃거름의 차이",
+            "비료 혼용과 시비 시기",
+        )
+        topic = topics[reference_time.astimezone().timetuple().tm_yday % len(topics)]
+        category = CategoryDefinition(category.key, category.label, (topic,), category.priority_terms)
+
+    if not category.queries:
+        try:
+            response = requests.get(
+                "https://api.open-meteo.com/v1/forecast",
+                params={
+                    "latitude": 36.4592,
+                    "longitude": 126.8022,
+                    "current": "temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m",
+                    "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max",
+                    "timezone": "Asia/Seoul",
+                    "forecast_days": 7,
+                },
+                timeout=20,
+            )
+            response.raise_for_status()
+            weather = response.json()
+            current = weather.get("current", {})
+            daily = weather.get("daily", {})
+            if category.key.endswith("today"):
+                title = "청양 오늘 날씨"
+                summary = (
+                    f"현재 기온 {current.get('temperature_2m')}°C, 습도 {current.get('relative_humidity_2m')}%, "
+                    f"풍속 {current.get('wind_speed_10m')}km/h입니다. 날씨 코드 {current.get('weather_code')}입니다."
+                )
+            else:
+                title = "청양 이번 주 날씨 개요"
+                highs = daily.get("temperature_2m_max", [])
+                lows = daily.get("temperature_2m_min", [])
+                rain = daily.get("precipitation_probability_max", [])
+                summary = f"앞으로 7일 최고기온 {highs}, 최저기온 {lows}, 강수확률 {rain}의 전망입니다."
+            item = NewsItem(
+                category=category.key, title=title, source="Open-Meteo",
+                source_domain="open-meteo.com", url="https://open-meteo.com/",
+                published_at=reference_time, summary=summary, query="청양 날씨",
+                fingerprint=_fingerprint(title, "Open-Meteo"), score=100.0,
+                source_weight=10.0, verification_flags=["forecast_data"],
+            )
+            return [item]
+        except (requests.RequestException, ValueError, TypeError):
+            return []
 
     for query in category.queries:
         url = _build_feed_url(query)

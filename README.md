@@ -1,6 +1,14 @@
-# Morning Radio
+# 청양 농업 데일리 브리핑
 
-Morning Radio builds a weekday Korean morning news briefing from the last 24 hours and ships it as:
+청양 농업 데일리 브리핑은 매일 다음 내용을 수집·요약해 전송합니다.
+
+- 충남 청양의 오늘 날씨와 7일 날씨 개요(Open-Meteo)
+- 최근 농사·농업 뉴스와 비료 관련 새 소식
+- 날짜에 따라 바뀌는 쉬운 비료 공부 주제
+
+기존의 정치·국제·국방·AI·경제 중심 카테고리는 위 주제로 교체되었습니다.
+
+실행 결과는 다음으로 제공됩니다:
 
 - a ranked article digest
 - a two-speaker radio script
