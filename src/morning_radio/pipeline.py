@@ -430,16 +430,53 @@ def _build_show(
     if config.llm_enabled:
         try:
             editor = GeminiEditor(config)
-            return editor.create_radio_show(
+            candidate = editor.create_radio_show(
                 briefs=briefs,
                 quiet_categories=quiet_categories,
                 opening_pair=opening_pair,
                 start_iso=start_utc.isoformat(),
                 end_iso=end_utc.isoformat(),
             )
+            return _validate_radio_show(candidate, config)
         except Exception:
             return _fallback_show(config, briefs, quiet_categories, opening_pair, start_utc, end_utc)
     return _fallback_show(config, briefs, quiet_categories, opening_pair, start_utc, end_utc)
+
+
+def _validate_radio_show(show: RadioShow, config: AppConfig) -> RadioShow:
+    script = show.script_markdown.strip()
+    if not script:
+        raise ValueError("Gemini returned an empty radio script.")
+
+    dialogue_lines = [
+        line.strip()
+        for line in script.splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+    host_prefix = f"{config.host_name}:"
+    analyst_prefix = f"{config.analyst_name}:"
+    if not any(line.startswith(host_prefix) for line in dialogue_lines):
+        raise ValueError("Radio script is missing the host speaker label.")
+    if not any(line.startswith(analyst_prefix) for line in dialogue_lines):
+        raise ValueError("Radio script is missing the analyst speaker label.")
+    if len(dialogue_lines) < 8:
+        raise ValueError("Radio script is too short for a two-person broadcast.")
+    if any(not line.startswith((host_prefix, analyst_prefix)) for line in dialogue_lines):
+        raise ValueError("Radio script contains an unlabeled dialogue line.")
+    if any(token in script for token in ("http://", "https://", "왜 중요한가", "we picked the top")):
+        raise ValueError("Radio script contains operational or non-broadcast text.")
+
+    estimated_minutes = max(5, min(int(show.estimated_minutes), 7))
+    plaintext = re.sub(r"^#+\s*", "", script, flags=re.MULTILINE)
+    plaintext = re.sub(r"\*\*(.*?)\*\*", r"\1", plaintext)
+    return RadioShow(
+        show_title=show.show_title or "아침 뉴스 라디오",
+        show_summary=show.show_summary,
+        estimated_minutes=estimated_minutes,
+        script_markdown=script,
+        script_plaintext=plaintext,
+        quiet_categories=show.quiet_categories,
+    )
 
 
 def _fallback_brief(category: str, label: str, items: list[NewsItem]) -> CategoryBrief:
@@ -476,9 +513,9 @@ def _fallback_brief(category: str, label: str, items: list[NewsItem]) -> Categor
     return CategoryBrief(
         category=category,
         label=label,
-        lead=_compose_lead(label, stories),
+        lead=_compose_lead(category, label, stories),
         stories=stories,
-        watch=_compose_follow_up_answer(label, stories),
+        watch=_compose_follow_up_answer(category, label, stories),
     )
 
 
@@ -502,9 +539,10 @@ def _fallback_show(
         if not brief.stories:
             continue
         lines.append("")
-        lines.append(f"{config.host_name}: 먼저 {brief.label}부터 짚어보죠. 오늘 가장 중요한 흐름은 뭔가요?")
+        setup, follow_up = _fallback_radio_prompts(brief)
+        lines.append(f"{config.host_name}: {setup}")
         lines.append(f"{config.analyst_name}: {brief.lead}")
-        lines.append(f"{config.host_name}: {_follow_up_question(brief.label, brief.stories)}")
+        lines.append(f"{config.host_name}: {follow_up}")
         lines.append(f"{config.analyst_name}: {brief.watch}")
 
     if quiet_categories:
@@ -531,8 +569,40 @@ def _fallback_show(
     )
 
 
-def _compose_lead(label: str, stories: list[dict[str, Any]]) -> str:
-    summaries = [_ensure_sentence(story["angle"]) for story in stories[:4]]
+def _fallback_radio_prompts(brief: CategoryBrief) -> tuple[str, str]:
+    prompts = {
+        "cheongyang_weather_today": (
+            "청양의 오늘 날씨를 오전·오후·야간으로 나눠 전해주시죠.",
+            "시간대별 기온과 비나 눈의 양을 기준으로 농작업에서 주의할 점을 짚어주시죠.",
+        ),
+        "cheongyang_weather_week": (
+            "청양의 단기 날씨 전망부터 살펴보겠습니다.",
+            "내일과 모레, 또는 이번 주의 기온과 강수 흐름에서 눈여겨볼 점은 뭔가요?",
+        ),
+        "cheongyang_weather_month": (
+            "이번 달 또는 다음 달 청양의 전반적인 기상 흐름을 알아보겠습니다.",
+            "장기 전망인 만큼 확실한 흐름과 아직 변동성이 큰 부분을 나눠 설명해주시죠.",
+        ),
+        "fertilizer_learning": (
+            "오늘의 비료 공부 주제를 차근차근 알아보겠습니다.",
+            "초보를 조금 넘은 농업인이 실제 밭에서 적용할 때 무엇을 확인해야 하나요?",
+        ),
+    }
+    if brief.category in prompts:
+        return prompts[brief.category]
+    return (
+        f"{brief.label}에서 누가 무엇을 했고 어떤 변화가 있었는지 살펴보겠습니다.",
+        "기사에 나온 후속 조치와 현장에서 확인할 부분을 짚어주시죠.",
+    )
+
+
+def _compose_lead(category: str, label: str, stories: list[dict[str, Any]]) -> str:
+    if category.startswith("cheongyang_weather_") or category == "fertilizer_learning":
+        return _ensure_sentence(str(stories[0].get("article_summary") or stories[0].get("angle") or ""))
+    summaries = [
+        _first_sentence(_ensure_sentence(str(story.get("article_summary") or story.get("angle") or "")))
+        for story in stories[:4]
+    ]
     if len(summaries) == 1:
         return summaries[0]
     if len(summaries) == 2:
@@ -540,12 +610,18 @@ def _compose_lead(label: str, stories: list[dict[str, Any]]) -> str:
     return " ".join(summary for summary in summaries if summary)
 
 
-def _compose_follow_up_answer(label: str, stories: list[dict[str, Any]]) -> str:
-    primary = stories[0]
-    primary_angle = _first_sentence(_ensure_sentence(primary["angle"]))
-    reason = _ensure_sentence(primary["why_it_matters"])
-    follow_up = _ensure_sentence(_watch_message(label))
-    return f"특히 첫 번째 이슈가 중요합니다. {primary_angle} {reason} {follow_up}"
+def _compose_follow_up_answer(category: str, label: str, stories: list[dict[str, Any]]) -> str:
+    if category == "cheongyang_weather_today":
+        return "비나 눈이 예보된 시간대에는 방제와 야외 작업을 피하고, 강수량에 맞춰 배수와 시설물 점검을 준비하면 좋겠습니다."
+    if category in {"cheongyang_weather_week", "cheongyang_weather_month"}:
+        return "전망은 변동될 수 있으므로 실제 작업 전에는 새로 발표된 단기 예보를 다시 확인해야 합니다."
+    if category == "fertilizer_learning":
+        return "실제 적용 전에는 작물, 토양검정, 시비량과 시기를 함께 확인해야 합니다."
+    if category == "agriculture_news":
+        return "후속 발표와 실제 농가 적용 여부를 확인하겠습니다."
+    if category == "fertilizer_news":
+        return "지원 규모, 제품·자재 변화와 현장 적용 조건을 원문에서 확인하겠습니다."
+    return _ensure_sentence(_watch_message(label))
 
 
 def _follow_up_question(label: str, stories: list[dict[str, Any]]) -> str:
@@ -625,7 +701,12 @@ def _condense_article(article: NewsItem) -> str:
     sentences = re.split(r"(?<=[.!?])\s+|(?<=다\.)\s+", text)
     summary = " ".join(sentence.strip() for sentence in sentences[:2] if sentence.strip())
     summary = re.sub(r"\s+", " ", summary).strip(" -:;,.")
-    if len(summary) < 18:
+    if (
+        len(summary) < 18
+        or _headline_overlap_ratio(article.title, summary) >= 0.55
+        or summary.count("'") % 2 == 1
+        or summary.count("“") != summary.count("”")
+    ):
         return _headline_fallback(article.title)
     return _ensure_sentence(summary)
 
@@ -642,34 +723,9 @@ def _headline_fallback(title: str) -> str:
     cleaned = re.sub(r"^\[[^\]]+\]\s*", "", title).strip()
     cleaned = cleaned.replace("“", '"').replace("”", '"').replace("’", "'").replace("‘", "'")
 
-    quote_match = re.match(r'(.+?)\s*"(.+?)"', cleaned)
-    if quote_match:
-        speaker = _normalize_speaker(quote_match.group(1))
-        claim = quote_match.group(2).strip(" ,.-")
-        return _ensure_sentence(f"{speaker} 측이 {claim}라는 입장을 내놨습니다")
-
-    if "…" in cleaned:
-        left, right = cleaned.split("…", 1)
-        left = left.strip(" ,.-")
-        right = right.strip(" ,.-")
-        if left and right:
-            return _ensure_sentence(f"{left}와 관련해 {right} 흐름이 부각됐습니다")
-
-    if " - " in cleaned:
-        left, right = cleaned.rsplit(" - ", 1)
-        left = left.strip(" ,.-")
-        right = right.strip(" ,.-")
-        if left and right:
-            return _ensure_sentence(f"{left}와 관련해 {right} 내용이 전해졌습니다")
-
-    if ":" in cleaned:
-        left, right = cleaned.split(":", 1)
-        left = left.strip(" ,.-")
-        right = right.strip(" ,.-")
-        if left and right:
-            return _ensure_sentence(f"{left}를 두고 {right} 내용이 나왔습니다")
-
-    return _ensure_sentence(f"{cleaned}와 관련한 움직임이 보도됐습니다")
+    return _ensure_sentence(
+        f"기사 제목은 ‘{cleaned}’이며, 제공된 메타데이터만으로는 세부 내용을 확인하기 어렵습니다"
+    )
 
 
 def _normalize_speaker(raw: str) -> str:

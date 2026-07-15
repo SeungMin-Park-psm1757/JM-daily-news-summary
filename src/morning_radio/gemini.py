@@ -225,6 +225,7 @@ Articles:
             "on every dialogue line. "
             "Summarize meaning and implications, not headlines. "
             "For weather sections, speak like a Korean TV weathercaster: give morning, afternoon, and night details, mention rain or snow amounts when present, and omit an importance assessment. "
+            "Use only facts present in the supplied briefs. Never invent weather values, dates, article facts, quotations, causes, or outcomes. "
             "Keep the exchange feeling like live radio banter rather than a long monologue. "
             "Avoid hype, avoid unverified claims, and mention uncertainty when needed."
         )
@@ -255,8 +256,11 @@ Script rules:
 - Vary transitions and category handoffs so the show does not sound repetitive.
 - Let the host sound steady and framing-focused; let the analyst sound quick, bright, and insight-driven.
 - Do not mechanically repeat headlines.
-- Focus on what changed, why it matters, and what to watch next.
+- Focus on what happened, who was involved, what changed, and what comes next; avoid generic importance statements.
 - Let each category breathe slightly longer than a headline recap by adding one more sentence of context or consequence.
+- For news and fertilizer updates, explain who did what, what changed, when or where it happened, and the stated reason or next step when supplied. Do not turn every item into a generic importance statement.
+- For weather, preserve the supplied time-window and figures exactly. Do not add a percentage or amount that is not in the brief.
+- If the supplied brief is thin, say that the available source metadata is limited instead of filling the gap with plausible-sounding details.
 - Do not include operational filler such as "we picked the top three stories."
 - If `quiet_categories` is not empty, mention those categories once near the end in a single short exchange.
 - Do not include URLs in the script.
