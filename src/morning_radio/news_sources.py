@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import html
+import json
 import re
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
-from urllib.parse import quote_plus, urlparse
+from urllib.parse import quote, quote_plus, urlparse
 
 import feedparser
 import requests
@@ -16,6 +17,7 @@ from morning_radio.models import CategoryDefinition, NewsItem
 USER_AGENT = (
     "Mozilla/5.0 (compatible; MorningRadio/0.1; +https://github.com/actions)"
 )
+GOOGLE_NEWS_USER_AGENT = "Mozilla/5.0"
 
 GOOGLE_NEWS_SEARCH = "https://news.google.com/rss/search?q={query}&hl=ko&gl=KR&ceid=KR:ko"
 
@@ -111,6 +113,13 @@ GLOBAL_PENALTY_TERMS = (
     "presented by",
 )
 
+BROADCAST_SOURCE_DENYLIST = ("vietnam.vn",)
+BROADCAST_PROMOTION_TERMS = ("사랑 전파", "새 학년", "환영", "기부", "모금", "장학", "수상", "홍보", "광고")
+BROADCAST_REQUIRED_TERMS = {
+    "agriculture_news": ("농업", "농사", "농촌", "농산물", "작물", "재배", "영농", "축산", "병해충", "농기계"),
+    "fertilizer_news": ("비료", "질소", "인산", "칼리", "시비", "토양", "양분", "퇴비", "fertilizer"),
+}
+
 CATEGORIES: tuple[CategoryDefinition, ...] = (
     CategoryDefinition(
         key="korea_politics",
@@ -196,12 +205,18 @@ CATEGORIES = (
     CategoryDefinition("cheongyang_weather_month", "청양 월간 기상 전망", ()),
     CategoryDefinition(
         "agriculture_news", "농사·농업 뉴스",
-        ("농사 농업 농촌 작물 재배 when:1d", "농업 정책 농업기술 농산물 when:1d"),
+        (
+            "농사 농업 농촌 작물 재배 when:1d",
+            "농업 정책 농업기술 농산물 병해충 재배 when:1d",
+        ),
         ("농업", "농사", "작물", "농촌", "재배", "농산물"),
     ),
     CategoryDefinition(
         "fertilizer_news", "비료 관련 새 소식",
-        ("비료 fertilizer 농업 when:1d", "유기질비료 무기질비료 비료 가격 when:1d"),
+        (
+            "비료 시비 토양 양분 영농자재 when:3d",
+            "유기질비료 무기질비료 비료 가격 when:3d",
+        ),
         ("비료", "질소", "인산", "칼리", "퇴비", "fertilizer"),
     ),
     CategoryDefinition(
@@ -290,6 +305,67 @@ def _source_weight(source: str, url: str) -> float:
     return round(_source_boost(source) + _domain_boost(url), 1)
 
 
+def _decode_google_news_url(url: str) -> str:
+    parsed = urlparse(url)
+    path_parts = [part for part in parsed.path.split("/") if part]
+    if parsed.netloc != "news.google.com" or len(path_parts) < 2 or path_parts[-2] != "articles":
+        return url
+
+    article_id = path_parts[-1]
+    try:
+        article_page = requests.get(
+            f"https://news.google.com/articles/{article_id}",
+            timeout=20,
+            headers={"User-Agent": GOOGLE_NEWS_USER_AGENT},
+        )
+        article_page.raise_for_status()
+        timestamp_match = re.search(r'data-n-a-ts="([^"]+)"', article_page.text)
+        signature_match = re.search(r'data-n-a-sg="([^"]+)"', article_page.text)
+        if not timestamp_match or not signature_match:
+            return url
+
+        request_payload = [
+            "Fbv4je",
+            (
+                '["garturlreq",[["X","X",["X","X"],null,null,1,1,"US:en",null,1,null,null,null,null,null,0,1],'
+                f'"X","X",1,[1,1,1],1,1,null,0,0,null,0],"{article_id}",'
+                f'{timestamp_match.group(1)},"{signature_match.group(1)}"]'
+            ),
+        ]
+        decoded = requests.post(
+            "https://news.google.com/_/DotsSplashUi/data/batchexecute",
+            timeout=20,
+            headers={
+                "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+                "Referer": "https://news.google.com/",
+                "User-Agent": GOOGLE_NEWS_USER_AGENT,
+            },
+            data=f"f.req={quote(json.dumps([[request_payload]]))}",
+        )
+        decoded.raise_for_status()
+        rows = json.loads(decoded.text.split("\n\n", 1)[1])
+        payload = json.loads(rows[0][2])
+        resolved_url = payload[1]
+        return resolved_url if isinstance(resolved_url, str) and resolved_url.startswith("http") else url
+    except (requests.RequestException, ValueError, IndexError, KeyError, TypeError, json.JSONDecodeError):
+        return url
+
+
+def _is_broadcast_worthy(category: str, title: str, summary: str, source: str) -> bool:
+    if category not in BROADCAST_REQUIRED_TERMS:
+        return True
+
+    text = f"{title} {summary}".lower()
+    if any(blocked in source.lower() for blocked in BROADCAST_SOURCE_DENYLIST):
+        return False
+    if any(term in text for term in BROADCAST_PROMOTION_TERMS):
+        return False
+    if not any(term in text for term in BROADCAST_REQUIRED_TERMS[category]):
+        return False
+
+    return True
+
+
 def _score_article(
     *,
     category: CategoryDefinition,
@@ -363,6 +439,29 @@ def _weather_description(code: int | None) -> str:
     }.get(code, "날씨 변화")
 
 
+def _weathercaster_description(condition: str) -> str:
+    return {
+        "맑음": "맑겠고",
+        "대체로 맑음": "대체로 맑겠고",
+        "구름 조금": "구름이 조금 끼겠고",
+        "흐림": "흐리겠고",
+        "안개": "안개가 끼겠고",
+        "짙은 안개": "짙은 안개가 끼겠고",
+        "약한 이슬비": "약한 이슬비가 내리겠고",
+        "이슬비": "이슬비가 내리겠고",
+        "강한 이슬비": "강한 이슬비가 내리겠고",
+        "약한 비": "약한 비가 내리겠고",
+        "비": "비가 내리겠고",
+        "많은 비": "많은 비가 내리겠고",
+        "약한 눈": "약한 눈이 내리겠고",
+        "눈": "눈이 내리겠고",
+        "많은 눈": "많은 눈이 내리겠고",
+        "소나기": "소나기가 지나겠고",
+        "강한 소나기": "강한 소나기가 지나겠고",
+        "뇌우": "뇌우가 있겠고",
+    }.get(condition, f"{condition}이 이어지겠고")
+
+
 def _format_degree(value: float) -> str:
     rounded = int(round(value))
     return f"{rounded:02d}도" if rounded >= 0 else f"-{abs(rounded):02d}도"
@@ -381,14 +480,13 @@ def _weather_period_summary(
     precipitation = sum(float(item["precipitation"]) for item in hours)
     snowfall = sum(float(item["snowfall"]) for item in hours)
     if snowfall >= 0.1:
-        precipitation_text = f"눈은 약 {snowfall:.1f}cm"
+        precipitation_text = f"예상 적설은 약 {snowfall:.1f}cm입니다"
     elif precipitation >= 0.1:
-        precipitation_text = f"비는 약 {precipitation:.1f}mm"
+        precipitation_text = f"예상 강수량은 약 {precipitation:.1f}mm입니다"
     else:
         precipitation_text = "뚜렷한 비나 눈 소식은 없습니다"
-    condition_particle = "가" if condition.endswith(("비", "눈", "소나기", "뇌우")) else "이"
     return (
-        f"{label}에는 {condition}{condition_particle} 이어지고, 기온은 {_format_degree(min(temperatures))}에서 "
+        f"{label}에는 {_weathercaster_description(condition)} 기온은 {_format_degree(min(temperatures))}에서 "
         f"{_format_degree(max(temperatures))} 사이입니다. {precipitation_text}."
     )
 
@@ -493,16 +591,25 @@ def _fetch_weather_category(category: CategoryDefinition, reference_time: dateti
         end_index = 7 if local_now.weekday() == 0 else 3
         outlook: list[str] = []
         for index in range(start_index, min(end_index, len(daily.get("time", [])))):
-            date_text = str(daily["time"][index])[5:].replace("-", "월 ") + "일"
+            forecast_date = datetime.fromisoformat(str(daily["time"][index]))
+            date_text = f"{forecast_date.month}월 {forecast_date.day}일"
             condition = _weather_description(int(daily.get("weather_code", [0])[index]))
             low = _format_degree(float(daily.get("temperature_2m_min", [0])[index]))
             high = _format_degree(float(daily.get("temperature_2m_max", [0])[index]))
             rain = float(daily.get("precipitation_sum", [0])[index] or 0)
             snow = float(daily.get("snowfall_sum", [0])[index] or 0)
-            precipitation_text = f"눈 약 {snow:.1f}cm" if snow >= 0.1 else f"비 약 {rain:.1f}mm" if rain >= 0.1 else "비 소식 적음"
-            outlook.append(f"{date_text}은 {condition}, 최저 {low}, 최고 {high}, {precipitation_text}")
+            precipitation_text = (
+                f"예상 적설은 약 {snow:.1f}cm입니다"
+                if snow >= 0.1
+                else f"예상 강수량은 약 {rain:.1f}mm입니다"
+                if rain >= 0.1
+                else "뚜렷한 비 소식은 없겠습니다"
+            )
+            outlook.append(
+                f"{date_text}은 {_weathercaster_description(condition)} 기온은 최저 {low}, 최고 {high}겠습니다. {precipitation_text}"
+            )
         title = "청양 이번 주 날씨 전망" if local_now.weekday() == 0 else "청양 내일·모레 날씨 전망"
-        summary = "청양 날씨 전망입니다. " + "; ".join(outlook) + "."
+        summary = "청양 날씨 전망입니다. " + ". ".join(outlook) + "."
     return [NewsItem(
         category=category.key, title=title, source="Open-Meteo", source_domain="open-meteo.com",
         url="https://open-meteo.com/", published_at=reference_time, summary=summary,
@@ -676,6 +783,9 @@ def fetch_category_news(
             clean_title, source = _extract_source(entry, raw_title)
             if not clean_title:
                 continue
+            summary = _clean_html(entry.get("summary", ""))
+            if not _is_broadcast_worthy(category.key, clean_title, summary, source):
+                continue
 
             item = NewsItem(
                 category=category.key,
@@ -684,13 +794,13 @@ def fetch_category_news(
                 source_domain=_extract_domain(str(entry.get("link", "")).strip()),
                 url=str(entry.get("link", "")).strip(),
                 published_at=published_at,
-                summary=_clean_html(entry.get("summary", "")),
+                summary=summary,
                 query=query,
                 fingerprint=_fingerprint(clean_title, source),
                 score=_score_article(
                     category=category,
                     title=clean_title,
-                    summary=_clean_html(entry.get("summary", "")),
+                    summary=summary,
                     source=source,
                     url=str(entry.get("link", "")).strip(),
                     published_at=published_at,
@@ -700,7 +810,7 @@ def fetch_category_news(
                 verification_flags=verification_flags_for_article(
                     category_key=category.key,
                     title=clean_title,
-                    summary=_clean_html(entry.get("summary", "")),
+                    summary=summary,
                 ),
             )
             collected.setdefault(item.fingerprint, item)
@@ -788,8 +898,9 @@ def enrich_articles(articles: list[NewsItem]) -> None:
         ):
             continue
         try:
+            source_url = _decode_google_news_url(article.url)
             response = requests.get(
-                article.url,
+                source_url,
                 timeout=20,
                 headers={"User-Agent": USER_AGENT},
             )
@@ -798,6 +909,7 @@ def enrich_articles(articles: list[NewsItem]) -> None:
             continue
 
         article.resolved_url = response.url
+        article.source_domain = _extract_domain(response.url)
         content_type = response.headers.get("Content-Type", "")
         if "html" not in content_type.lower():
             continue

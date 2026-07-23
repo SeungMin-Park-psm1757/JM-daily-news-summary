@@ -3,6 +3,7 @@ from __future__ import annotations
 import array
 import html
 import json
+import logging
 import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -17,46 +18,12 @@ from morning_radio.telegram import send_digest_and_audio
 
 OPENING_PATTERNS: tuple[tuple[str, str], ...] = (
     (
-        "좋은 아침입니다. 잠 깨는 데 필요한 뉴스만 가볍게 챙겨볼게요.",
-        "밤사이 흐름만 짧고 선명하게 정리해드리겠습니다.",
-    ),
-    (
-        "아침 공기처럼 가볍게, 오늘 꼭 알아둘 소식만 먼저 짚어보겠습니다.",
-        "복잡한 설명은 덜고 중요한 변화만 바로 들어가보죠.",
-    ),
-    (
-        "하루 시작 전에 머릿속 정리부터 해보죠.",
-        "밤새 쌓인 뉴스 가운데 핵심만 골라 전해드리겠습니다.",
-    ),
-    (
-        "출근길이나 커피 한 잔 앞에서 듣기 좋게 준비했습니다.",
-        "오늘도 필요한 뉴스만 짧게 묶어보겠습니다.",
-    ),
-    (
-        "아침엔 길게 말할 필요 없죠.",
-        "지금 알아야 할 흐름만 빠르게 훑어보겠습니다.",
-    ),
-    (
-        "오늘 하루의 온도를 정할 뉴스부터 먼저 보겠습니다.",
-        "무거운 내용도 최대한 간결하게 풀어드릴게요.",
-    ),
-    (
-        "바쁜 아침이니 바로 핵심으로 들어가겠습니다.",
-        "지난밤 가장 눈에 띈 변화만 추려왔습니다.",
-    ),
-    (
-        "아침 루틴에 뉴스 한 스푼만 얹어보죠.",
-        "한눈에 흐름이 잡히게 정리해드리겠습니다.",
-    ),
-    (
-        "오늘도 정신없이 시작되기 전에 큰 그림부터 같이 보겠습니다.",
-        "세부보다 방향이 보이도록 짧게 묶어드릴게요.",
-    ),
-    (
-        "잠깐만 들어도 오늘 뉴스 감이 오도록 준비했습니다.",
-        "핵심 이슈부터 순서대로 바로 들어가보죠.",
+        "안녕하세요. 청양 농업 브리핑입니다.",
+        "청양 날씨와 비료 정보를 전해드리겠습니다.",
     ),
 )
+
+logger = logging.getLogger(__name__)
 
 TITLE_STOPWORDS = {
     "속보",
@@ -154,8 +121,8 @@ def run_pipeline(config: AppConfig) -> Path:
     quota_log = _quota_log(config, selected_by_category)
 
     briefs = _build_briefs(config, selected_by_category)
-    show = _build_show(config, briefs, quiet_categories, opening_pair, start_utc, now_utc)
-    message_digest = _render_message_digest(show.show_title, briefs, quiet_categories)
+    show = _build_show(config, briefs, [], opening_pair, start_utc, now_utc)
+    message_digest = _render_message_digest(show.show_title, briefs, [])
 
     _write_json(
         run_dir / "news_items.json",
@@ -244,22 +211,18 @@ def _opening_pair(local_dt: datetime) -> tuple[str, str]:
 def _select_top_articles(items: list[NewsItem], config: AppConfig) -> list[NewsItem]:
     ranked = sorted(items, key=lambda article: (article.score, article.published_at), reverse=True)
     clusters = _cluster_articles(ranked)
+    category = ranked[0].category if ranked else ""
+    threshold = min(config.score_threshold, 28.0) if category in {"agriculture_news", "fertilizer_news"} else config.score_threshold
     selected: list[NewsItem] = []
     for cluster_index, cluster in enumerate(clusters, start=1):
         article = _cluster_representative(cluster)
-        if article.score < config.score_threshold:
+        if article.score < threshold:
             continue
         article.cluster_id = f"{article.category}-{cluster_index:02d}"
         article.cluster_size = len(cluster)
         selected.append(article)
         if len(selected) >= config.max_story_count:
             break
-    if not selected and ranked and ranked[0].category in {"agriculture_news", "fertilizer_news"}:
-        for cluster_index, cluster in enumerate(clusters[: config.max_story_count], start=1):
-            article = _cluster_representative(cluster)
-            article.cluster_id = f"{article.category}-{cluster_index:02d}"
-            article.cluster_size = len(cluster)
-            selected.append(article)
     return selected
 
 
@@ -410,6 +373,7 @@ def _build_briefs(
                     ),
                 )
             except Exception:
+                logger.warning("Gemini category brief failed for %s; using deterministic brief.", category.key, exc_info=True)
                 briefs.append(_fallback_brief(category.key, category.label, selected))
         return briefs
 
@@ -439,6 +403,7 @@ def _build_show(
             )
             return _validate_radio_show(candidate, config)
         except Exception:
+            logger.warning("Gemini radio script failed validation; using deterministic script.", exc_info=True)
             return _fallback_show(config, briefs, quiet_categories, opening_pair, start_utc, end_utc)
     return _fallback_show(config, briefs, quiet_categories, opening_pair, start_utc, end_utc)
 
@@ -529,7 +494,7 @@ def _fallback_show(
 ) -> RadioShow:
     local_date = end_utc.astimezone(config.timezone).strftime("%m월 %d일")
     lines = [
-        f"# {local_date} 아침 뉴스 라디오",
+        f"# {local_date} 청양 농업 브리핑",
         "",
         f"{config.host_name}: {opening_pair[0]}",
         f"{config.analyst_name}: {opening_pair[1]}",
@@ -539,29 +504,17 @@ def _fallback_show(
         if not brief.stories:
             continue
         lines.append("")
-        setup, follow_up = _fallback_radio_prompts(brief)
+        setup = _fallback_radio_prompt(brief)
         lines.append(f"{config.host_name}: {setup}")
         lines.append(f"{config.analyst_name}: {brief.lead}")
-        lines.append(f"{config.host_name}: {follow_up}")
-        lines.append(f"{config.analyst_name}: {brief.watch}")
-
-    if quiet_categories:
-        lines.append("")
-        lines.append(f"{config.host_name}: 오늘 상대적으로 조용했던 분야도 있었나요?")
-        lines.append(
-            f"{config.analyst_name}: 오늘은 {', '.join(quiet_categories)} 분야에서 기준 점수를 넘는 특정 기사가 많지 않았습니다."
-        )
 
     lines.append("")
-    lines.append(f"{config.host_name}: 여기까지 {local_date} 아침 브리핑이었습니다.")
-    lines.append(
-        f"{config.analyst_name}: 숫자나 발언처럼 민감한 정보는 원문 기사로 다시 확인하면서 다음 업데이트에서 이어가겠습니다."
-    )
+    lines.append(f"{config.host_name}: 여기까지 {local_date} 청양 농업 브리핑이었습니다.")
     script_markdown = "\n".join(lines).strip()
 
     return RadioShow(
-        show_title=f"{local_date} 아침 뉴스 라디오",
-        show_summary=f"{start_utc.isoformat()}부터 {end_utc.isoformat()}까지의 뉴스 가운데 상위 기사만 추린 브리핑입니다.",
+        show_title=f"{local_date} 청양 농업 브리핑",
+        show_summary=f"{start_utc.isoformat()}부터 {end_utc.isoformat()}까지의 확인된 날씨와 농업·비료 정보를 정리했습니다.",
         estimated_minutes=6,
         script_markdown=script_markdown,
         script_plaintext=script_markdown.replace("# ", ""),
@@ -569,31 +522,16 @@ def _fallback_show(
     )
 
 
-def _fallback_radio_prompts(brief: CategoryBrief) -> tuple[str, str]:
+def _fallback_radio_prompt(brief: CategoryBrief) -> str:
     prompts = {
-        "cheongyang_weather_today": (
-            "청양의 오늘 날씨를 오전·오후·야간으로 나눠 전해주시죠.",
-            "시간대별 기온과 비나 눈의 양을 기준으로 농작업에서 주의할 점을 짚어주시죠.",
-        ),
-        "cheongyang_weather_week": (
-            "청양의 단기 날씨 전망부터 살펴보겠습니다.",
-            "내일과 모레, 또는 이번 주의 기온과 강수 흐름에서 눈여겨볼 점은 뭔가요?",
-        ),
-        "cheongyang_weather_month": (
-            "이번 달 또는 다음 달 청양의 전반적인 기상 흐름을 알아보겠습니다.",
-            "장기 전망인 만큼 확실한 흐름과 아직 변동성이 큰 부분을 나눠 설명해주시죠.",
-        ),
-        "fertilizer_learning": (
-            "오늘의 비료 공부 주제를 차근차근 알아보겠습니다.",
-            "초보를 조금 넘은 농업인이 실제 밭에서 적용할 때 무엇을 확인해야 하나요?",
-        ),
+        "cheongyang_weather_today": "먼저 오늘 청양 날씨입니다.",
+        "cheongyang_weather_week": "내일과 모레 청양 날씨 전망입니다.",
+        "cheongyang_weather_month": "청양의 월간 기상 전망입니다.",
+        "fertilizer_learning": "오늘의 비료 공부입니다.",
     }
     if brief.category in prompts:
         return prompts[brief.category]
-    return (
-        f"{brief.label}에서 누가 무엇을 했고 어떤 변화가 있었는지 살펴보겠습니다.",
-        "기사에 나온 후속 조치와 현장에서 확인할 부분을 짚어주시죠.",
-    )
+    return f"{brief.label}입니다."
 
 
 def _compose_lead(category: str, label: str, stories: list[dict[str, Any]]) -> str:
@@ -656,9 +594,9 @@ def _article_summary(category: str, article: NewsItem) -> str:
     condensed = _condense_article(article)
     if category.startswith("cheongyang_weather_"):
         return _ensure_sentence(article.summary or condensed)
-    return _ensure_sentence(
-        f"{condensed} 보도에 담긴 후속 조치와 현장 적용 여부는 원문에서 추가로 확인할 필요가 있습니다."
-    )
+    if _is_title_only_article(article):
+        return _ensure_sentence(article.title)
+    return condensed
 
 
 def _learning_summary(topic: str, source_summary: str) -> str:
@@ -692,23 +630,29 @@ def _condense_article(article: NewsItem) -> str:
     text = article.summary or ""
     text = _strip_repetition(text, article.title)
     text = _strip_repetition(text, article.source)
+    text = re.sub(r"^\[[^\]]*기자\]\s*", "", text)
     text = re.sub(r"https?://\S+", "", text)
     text = re.sub(r"\b[\w.-]+\.[a-z]{2,}\b", "", text, flags=re.IGNORECASE)
     text = re.sub(r"\s+", " ", text).strip(" -:;,.")
     if len(text) < 18:
         return _headline_fallback(article.title)
 
-    sentences = re.split(r"(?<=[.!?])\s+|(?<=다\.)\s+", text)
+    sentences = re.split(r"(?<=[.!?])\s*", text)
     summary = " ".join(sentence.strip() for sentence in sentences[:2] if sentence.strip())
     summary = re.sub(r"\s+", " ", summary).strip(" -:;,.")
     if (
         len(summary) < 18
-        or _headline_overlap_ratio(article.title, summary) >= 0.55
         or summary.count("'") % 2 == 1
         or summary.count("“") != summary.count("”")
     ):
         return _headline_fallback(article.title)
     return _ensure_sentence(summary)
+
+
+def _is_title_only_article(article: NewsItem) -> bool:
+    detail = _strip_repetition(article.summary or "", article.title)
+    detail = _strip_repetition(detail, article.source)
+    return len(detail.strip(" -:;,.")) < 25
 
 
 def _strip_repetition(text: str, fragment: str) -> str:
@@ -723,9 +667,7 @@ def _headline_fallback(title: str) -> str:
     cleaned = re.sub(r"^\[[^\]]+\]\s*", "", title).strip()
     cleaned = cleaned.replace("“", '"').replace("”", '"').replace("’", "'").replace("‘", "'")
 
-    return _ensure_sentence(
-        f"기사 제목은 ‘{cleaned}’이며, 제공된 메타데이터만으로는 세부 내용을 확인하기 어렵습니다"
-    )
+    return _ensure_sentence(cleaned)
 
 
 def _normalize_speaker(raw: str) -> str:

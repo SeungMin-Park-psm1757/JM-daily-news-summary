@@ -223,11 +223,11 @@ Articles:
             "The analyst is a bright female commentator who responds crisply, adds context, and occasionally reacts with brief natural bridge phrases. "
             f"Use the exact speaker labels {self.config.host_name} and {self.config.analyst_name} "
             "on every dialogue line. "
-            "Summarize meaning and implications, not headlines. "
+            "Summarize only verified substance, not headlines or editorial implications. "
             "For weather sections, speak like a Korean TV weathercaster: give morning, afternoon, and night details, mention rain or snow amounts when present, and omit an importance assessment. "
             "Use only facts present in the supplied briefs. Never invent weather values, dates, article facts, quotations, causes, or outcomes. "
-            "Keep the exchange feeling like live radio banter rather than a long monologue. "
-            "Avoid hype, avoid unverified claims, and mention uncertainty when needed."
+            "Keep the exchange concise and factual. "
+            "Avoid hype, unverified claims, operational explanations, and filler."
         )
 
         prompt = f"""
@@ -246,23 +246,15 @@ Required JSON shape:
 Script rules:
 - Use the exact speaker labels `{self.config.host_name}:` and `{self.config.analyst_name}:`.
 - Use the opening pair exactly as written.
-- For each category, follow this rhythm:
-  1. HOST setup question
-  2. ANALYST answer in 2-4 sentences
-  3. HOST short follow-up
-  4. ANALYST answer in 2-3 sentences that explains why it matters or what to watch
-- Aim for a final spoken runtime around five minutes at a brisk morning-radio pace.
-- Make it feel like polished live radio: crisp back-and-forth, brief acknowledgements, and no long monologues.
-- Vary transitions and category handoffs so the show does not sound repetitive.
-- Let the host sound steady and framing-focused; let the analyst sound quick, bright, and insight-driven.
+- For each category, write one short HOST cue followed by one ANALYST answer. Do not add a follow-up exchange.
+- Omit a category with no stories. Do not explain that a category is quiet or that metadata is limited.
+- Aim for a compact broadcast, with no repeated transitions or acknowledgements.
 - Do not mechanically repeat headlines.
-- Focus on what happened, who was involved, what changed, and what comes next; avoid generic importance statements.
-- Let each category breathe slightly longer than a headline recap by adding one more sentence of context or consequence.
+- For news, cover who did what, when or where it happened, and the stated result only when supplied.
 - For news and fertilizer updates, explain who did what, what changed, when or where it happened, and the stated reason or next step when supplied. Do not turn every item into a generic importance statement.
 - For weather, preserve the supplied time-window and figures exactly. Do not add a percentage or amount that is not in the brief.
-- If the supplied brief is thin, say that the available source metadata is limited instead of filling the gap with plausible-sounding details.
 - Do not include operational filler such as "we picked the top three stories."
-- If `quiet_categories` is not empty, mention those categories once near the end in a single short exchange.
+- Do not mention `quiet_categories`.
 - Do not include URLs in the script.
 - No investment advice, sensationalism, or overconfident claims.
 - For weather, use natural broadcast phrasing and do not say "why it matters". For the daily study, explain the concept at an introductory-to-intermediate level.
