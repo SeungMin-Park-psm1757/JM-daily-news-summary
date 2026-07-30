@@ -99,7 +99,7 @@ Current weekday defaults are tuned for a denser daily brief:
 
 The workflow is defined in `.github/workflows/daily-radio.yml`.
 
-- Schedule: weekday `06:00 KST`
+- Schedule: weekday `05:00 KST` (Telegram delivery target: around `06:00 KST`)
 - The workflow uses `daily` TTS mode by default
 - The workflow pins score threshold `40`, max story count `4`, and TTS speed `0.95`
 - Telegram delivery is enabled when the Telegram secrets are present
