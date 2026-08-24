@@ -2,8 +2,6 @@ name: Daily Morning Radio
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "0 20 * * 0-4"
 
 concurrency:
   group: daily-morning-radio-${{ github.ref }}
